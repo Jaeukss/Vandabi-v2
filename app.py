@@ -24,6 +24,7 @@ except Exception:  # pragma: no cover - Streamlit can still render without chart
     pd = None
 
 import engine_bridge
+from modules.config import list_config_status
 
 
 st.set_page_config(page_title="반다비 AI", page_icon="🐻", layout="wide", initial_sidebar_state="collapsed")
@@ -4871,15 +4872,18 @@ def render_flow_steps() -> None:
 
 
 def build_route_analysis() -> dict[str, Any]:
-    origin = st.session_state.get("origin") or "김포 구래역 1번 출구"
+    origin = st.session_state.get("origin") or "운양역"
     support = st.session_state.get("support_type") or SUPPORT_TYPES[0]
+    force_refresh = bool(st.session_state.pop("route_api_force_refresh", False)) or not st.session_state.get("route_result")
+    if force_refresh:
+        st.session_state.pop("route_public_api_cache", None)
     return engine_bridge.run_route_analysis(
         origin,
         DEFAULT_DESTINATION,
         support,
         buddy_matching=bool(st.session_state.get("buddy_matching")),
         generated_at=datetime.now().strftime("%Y-%m-%d %H:%M"),
-        force_refresh_apis=bool(st.session_state.pop("route_api_force_refresh", False)),
+        force_refresh_apis=force_refresh,
     )
 
 
@@ -4937,7 +4941,7 @@ def start_analysis() -> None:
         block_unavailable_destination()
         return
     st.session_state.destination = DEFAULT_DESTINATION
-    st.session_state.route_public_api_cache = None
+    st.session_state.pop("route_public_api_cache", None)
     st.session_state.route_api_force_refresh = True
     st.session_state.route_result = None
     st.session_state.route_analysis_result = None
@@ -6677,14 +6681,46 @@ def render_dashboard_page() -> None:
     )
     log_lines = list(st.session_state.get("dashboard_log_lines") or [])
     log_html = "".join(f"<p>{esc(line)}</p>" for line in log_lines)
-    api_items = engine_bridge.dashboard_api_status_items(
-        cache=st.session_state.get("dashboard_api_cache")
-    )
+
+    if st.button("API 상태 새로고침", key="dashboard_api_refresh", use_container_width=True):
+        st.session_state.pop("dashboard_api_cache", None)
+        st.session_state.pop("route_public_api_cache", None)
+        api_items = engine_bridge.dashboard_api_status_items(refresh=True)
+    else:
+        api_items = engine_bridge.dashboard_api_status_items(
+            cache=st.session_state.get("dashboard_api_cache")
+        )
     st.session_state.dashboard_api_cache = api_items
-    api_html = "".join(
-        f'<div class="dashboard-api-item{" wide" if label == "SendGrid" else ""}"><b>{esc(label)}</b><br>{esc(status)}</div>'
-        for label, status in api_items
+
+    secret_status = list_config_status()
+    allowed_secret_status = {"configured", "missing_key", "enabled", "disabled"}
+    secret_html = "".join(
+        f'<div class="dashboard-api-item"><b>{esc(name)}</b><br>{esc(status if status in allowed_secret_status else "missing_key")}</div>'
+        for name, status in secret_status.items()
     )
+
+    def _api_card(item: dict[str, Any]) -> str:
+        status = str(item.get("status", "unknown"))
+        source = str(item.get("source", ""))
+        reason = str(item.get("reason_code", item.get("reason", "")))
+        action = str(item.get("action_needed", ""))
+        real_count = str(item.get("real_count", ""))
+        fallback_count = str(item.get("fallback_count", ""))
+        details = [
+            f"status={status}",
+            f"source={source}" if source else "source=",
+            f"reason={reason}" if reason else "reason=",
+            f"action={action}" if action else "action=",
+            f"real={real_count}" if real_count != "" else "real=",
+            f"fallback={fallback_count}" if fallback_count != "" else "fallback=",
+        ]
+        return (
+            f'<div class="dashboard-api-item{" wide" if item.get("name") == "SendGrid" else ""}">'
+            f'<b>{esc(item.get("name", ""))}</b><br>'
+            f'{esc(" · ".join(details))}</div>'
+        )
+
+    api_html = "".join(_api_card(item) for item in api_items if isinstance(item, dict))
     chart_font_face = (
         f"""
           @font-face {{
@@ -6873,8 +6909,12 @@ def render_dashboard_page() -> None:
                     </table>
                 </div>
                 <div class="dashboard-api-section">
-                    <p class="dashboard-panel-title">공공데이터 연동 상태</p>
+                    <p class="dashboard-panel-title">API smoke status</p>
                     <div class="dashboard-api-grid">{api_html}</div>
+                </div>
+                <div class="dashboard-api-section">
+                    <p class="dashboard-panel-title">Streamlit Cloud Secrets status</p>
+                    <div class="dashboard-api-grid">{secret_html}</div>
                 </div>
                 <div class="dashboard-log-feed">{log_html}</div>
             </div>

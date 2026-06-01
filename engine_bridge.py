@@ -19,6 +19,7 @@ from modules.api_clients import (
 )
 from modules.config import get_secret
 from modules.data_loader import load_csv_inventory
+from modules.llm_client import test_openrouter_text_connection
 from modules.emailer import (
     build_official_draft as email_build_official_draft,
     can_send_email,
@@ -28,7 +29,7 @@ from modules.emailer import (
 )
 from modules.rag_bm25 import answer_with_rag, build_index
 from modules.scoring import calculate_viable_path_score
-from modules.vision import analyze_accessibility_image, demo_vision_fallback, vision_status
+from modules.vision import analyze_accessibility_image, demo_vision_fallback, test_vision_model_available, vision_status
 
 DEFAULT_DESTINATION = "김포 반다비체육센터"
 # VWorld는 시설명 검색이 잘 안 되어 주소로 좌표를 조회합니다 (변수.md 기준).
@@ -726,66 +727,89 @@ def load_report_rag() -> dict[str, Any]:
         return {"display_source": "fallback", "ok": False, "answer": ""}
 
 
-def dashboard_api_status_items(*, refresh: bool = False, cache: list[tuple[str, str]] | None = None) -> list[tuple[str, str]]:
-    if cache and not refresh:
+def _dashboard_status_row(
+    name: str,
+    result: dict[str, Any] | None = None,
+    *,
+    status: str | None = None,
+    source: str = "",
+    reason_code: str = "",
+    action_needed: str = "",
+    real_count: int | str = "",
+    fallback_count: int | str = "",
+) -> dict[str, Any]:
+    result = result or {}
+    raw_status = status or result.get("status") or result.get("data_status") or "unknown"
+    normalized = _normalize_api_status(raw_status)
+    reason = reason_code or str(result.get("reason_code") or result.get("reason") or "")
+    return {
+        "name": str(name),
+        "status": normalized,
+        "source": str(source or result.get("source") or ""),
+        "reason_code": reason,
+        "reason": reason,
+        "action_needed": str(action_needed or result.get("action_needed") or ""),
+        "real_count": result.get("real_count", real_count),
+        "fallback_count": result.get("fallback_count", fallback_count),
+    }
+
+
+def _dashboard_call(name: str, fn) -> dict[str, Any]:
+    try:
+        result = fn()
+        if not isinstance(result, dict):
+            return _dashboard_status_row(name, status="api_error", reason_code="invalid_result")
+        return _dashboard_status_row(name, result)
+    except Exception as exc:
+        return _dashboard_status_row(name, status="api_error", source="dashboard_smoke", reason_code=exc.__class__.__name__)
+
+
+def dashboard_api_status_items(*, refresh: bool = False, cache: list[dict[str, Any]] | None = None) -> list[dict[str, Any]]:
+    """Run safe smoke checks for the root dashboard.
+
+    Only status metadata is returned. Secret values, masked keys, key lengths,
+    raw URLs, and raw responses are never included.
+    """
+    if cache and not refresh and isinstance(cache, list) and all(isinstance(item, dict) for item in cache):
         return cache
 
-    items: list[tuple[str, str]] = []
-    try:
-        vmeta = vworld_status()
-        if vmeta.get("configured"):
-            probe = test_vworld_geocode_connection("운양역")
-            vlabel = _normalize_api_status(probe.get("status", probe.get("data_status")))
-        else:
-            vlabel = "missing_key"
-        items.append(("VWorld 주소검색", vlabel))
-    except Exception:
-        items.append(("VWorld 주소검색", "api_error"))
+    items: list[dict[str, Any]] = []
 
-    try:
-        dmeta = data_go_kr_status()
-        if not dmeta.get("configured"):
-            items.append(("data.go.kr", "missing_key"))
-        else:
-            weather = fetch_weather_short_forecast()
-            items.append(("기상 단기예보", _normalize_api_status(weather.get("status"))))
-            bus_route = fetch_bus_route()
-            items.append(("버스 노선 정보", _normalize_api_status(bus_route.get("status"))))
-            bus_arrival = fetch_bus_arrival()
-            items.append(("버스 도착 정보", _normalize_api_status(bus_arrival.get("status"))))
-    except Exception:
-        items.extend(
-            [
-                ("data.go.kr", "network_error"),
-                ("기상 단기예보", "fallback"),
-                ("버스 노선 정보", "fallback"),
-                ("버스 도착 정보", "fallback"),
-            ]
-        )
+    items.append(_dashboard_call("VWorld geocode", lambda: test_vworld_geocode_connection("운양역")))
+    items.append(_dashboard_call("Weather forecast", fetch_weather_short_forecast))
+    items.append(_dashboard_call("TAGO bus route", lambda: fetch_bus_route(route_no="81")))
+    items.append(_dashboard_call("TAGO bus arrival", lambda: fetch_bus_arrival(route_no="81")))
+    items.append(_dashboard_call("OpenRouter text", test_openrouter_text_connection))
+    items.append(_dashboard_call("Vision model", test_vision_model_available))
+    items.append(_dashboard_call("SendGrid", email_status))
 
     try:
         rag_index = build_index()
-        items.append(("RAG 문서검색", f"{rag_index.data_status} · chunks {len(rag_index.chunks)}"))
-    except Exception:
-        items.append(("RAG 문서검색", "fallback"))
-
-    try:
-        send_state = email_status()
-        items.append(("SendGrid", str(send_state.get("data_status", "disabled"))))
-    except Exception:
-        items.append(("SendGrid", "disabled"))
+        chunks = getattr(rag_index, "chunks", []) or []
+        items.append(
+            _dashboard_status_row(
+                "RAG docs",
+                status=str(getattr(rag_index, "data_status", "fallback")),
+                source="bm25",
+                reason_code="chunks_loaded" if chunks else "empty_docs",
+                real_count=len(chunks),
+                fallback_count=0,
+            )
+        )
+    except Exception as exc:
+        items.append(_dashboard_status_row("RAG docs", status="fallback", source="bm25", reason_code=exc.__class__.__name__))
 
     try:
         inventory = load_csv_inventory()
-        items.append(("CSV 데이터", str(inventory.get("data_status", "fallback"))))
-    except Exception:
-        items.append(("CSV 데이터", "fallback"))
+        if hasattr(inventory, "empty"):
+            status = "real_csv" if not inventory.empty else "missing"
+            real_count = int(len(inventory)) if not inventory.empty else 0
+        else:
+            status = "missing"
+            real_count = 0
+        items.append(_dashboard_status_row("CSV data", status=status, source="local_csv", reason_code="inventory", real_count=real_count, fallback_count=0))
+    except Exception as exc:
+        items.append(_dashboard_status_row("CSV data", status="fallback", source="local_csv", reason_code=exc.__class__.__name__))
 
-    try:
-        vstat = vision_status()
-        items.append(("Vision 모델", str(vstat.get("data_status", "missing_key"))))
-    except Exception:
-        items.append(("Vision 모델", "fallback"))
-
-    items.append(("접근성 제보", "session_store"))
     return items
+
