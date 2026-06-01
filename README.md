@@ -53,3 +53,41 @@ FastAPI·실시간 API 연동·SendGrid 실발송은 **이번 UI 1차 단계 범
 
 Streamlit native 로그인 폼은 브라우저 자동완성 인식 가능성이 iframe 방식보다 높습니다.  
 Chrome 비밀번호 UI는 브라우저 정책에 따르며 코드로 강제할 수 없습니다.
+
+## API Secret 설정과 smoke test
+
+이 앱은 API 키 값을 코드, 로그, README, 화면에 출력하지 않는다. 로컬 개발에서는 `.env.example`을 복사해 `.env`를 만들고 값만 채운다. `.env`는 `.gitignore`에 포함되어 커밋하지 않는다.
+
+```bash
+cp .env.example .env
+python -m pip install -r requirements.txt
+python -m scripts.check_config
+python -m scripts.smoke_external_apis
+python -m streamlit run app.py
+```
+
+필수/선택 설정 이름:
+
+| 이름 | 용도 | 비고 |
+|---|---|---|
+| `VWORLD_API_KEY` | VWorld 장소/주소 좌표 검색 | 없으면 fallback 좌표 |
+| `DATA_GO_KR_SERVICE_KEY` | 기상청, TAGO, 공공데이터 API | encoded key를 넣어도 앱에서 1회 decode 처리 |
+| `OPENROUTER_API_KEY` | OpenRouter 텍스트/비전 공통 키 | `OPENAI_API_KEY`와 다른 값 |
+| `OPENROUTER_MODEL` | 텍스트 답변 모델 | OpenRouter 콘솔에서 확인한 모델명 사용 |
+| `VISION_MODEL` | 이미지 검토 모델 | 없으면 비전 smoke test는 missing_model/fallback |
+| `SENDGRID_API_KEY` | SendGrid 발송 키 | 기본 발송 비활성 |
+| `EMAIL_ADDRESS` | SendGrid 인증 발신 주소 | 실제 값은 화면에 표시하지 않음 |
+| `ENABLE_SENDGRID_SEND` | 실제 발송 허용 | 기본값은 `false`; 검증 후 명시적으로 `true` 설정 |
+
+Streamlit Cloud에서는 `.streamlit/secrets.toml`을 GitHub에 올리지 않는다. Cloud 앱의 **Settings → Secrets**에 같은 이름을 입력한다. 로컬에서 `.streamlit/secrets.toml`을 만들 경우에도 커밋하지 않는다.
+
+상태 해석:
+
+- `configured`: 설정 이름이 존재함. 실제 값은 표시하지 않음.
+- `missing_key`: 설정이 없어 실제 API 호출 전 fallback 처리.
+- `real_api`: 실제 API 응답 성공.
+- `real_api_no_data`: API 호출은 정상이나 현재 조건에 데이터 없음.
+- `fallback`: 앱 안정성을 위한 대체 응답. 실API 성공이 아님.
+- `disabled`: SendGrid 실제 발송 차단 상태. 기본 안전 상태.
+
+주의: 실제 API 키, 일부 마스킹 키, 키 길이, 전체 요청 URL, raw response는 출력하지 않는다.

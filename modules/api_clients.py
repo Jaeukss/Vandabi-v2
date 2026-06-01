@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
+from urllib.parse import unquote
 from xml.etree import ElementTree as ET
 
 import requests
@@ -217,7 +218,9 @@ def vworld_status() -> dict[str, str | bool]:
 
 def get_data_go_kr_key() -> str | None:
     key = get_secret("DATA_GO_KR_SERVICE_KEY")
-    return str(key) if key not in (None, "") else None
+    if key in (None, ""):
+        return None
+    return unquote(str(key).strip())
 
 
 def data_go_kr_status() -> dict[str, str | bool]:
