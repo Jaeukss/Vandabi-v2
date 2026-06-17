@@ -24,7 +24,6 @@ except Exception:  # pragma: no cover - Streamlit can still render without chart
     pd = None
 
 import engine_bridge
-from modules.config import list_config_status
 
 
 st.set_page_config(page_title="반다비 AI", page_icon="🐻", layout="wide", initial_sidebar_state="collapsed")
@@ -114,6 +113,30 @@ def html_block(markup: str) -> str:
     return " ".join(line.strip() for line in dedent(markup).splitlines() if line.strip())
 
 
+def set_sr_message(message: str) -> None:
+    if not message:
+        return
+    st.session_state["sr_announcement"] = str(message)
+
+
+def render_sr_announcement() -> None:
+    message = st.session_state.get("sr_announcement", "")
+    if not message:
+        return
+    st.markdown(
+        f"""
+        <div id="sr-announcer"
+             class="sr-only"
+             role="status"
+             aria-live="polite"
+             aria-atomic="true">
+          {esc(message)}
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def init_state() -> None:
     defaults: dict[str, Any] = {
         "logged_in": False,
@@ -161,6 +184,7 @@ def init_state() -> None:
         "pending_confirm": None,
         "center_warning": False,
         "notice": "",
+        "sr_announcement": "",
         "high_contrast": False,
         "vision_last_report_type": "점자블록",
         "access_facility_type": "점자블록",
@@ -267,6 +291,37 @@ def inject_css() -> None:
             --bandabi-accent-2: #6b4fa0;
             --bandabi-green: #2f8a58;
             --bandabi-danger: #9d3654;
+            --accent: var(--bandabi-accent);
+        }}
+
+        .sr-only {{
+            position: absolute !important;
+            width: 1px !important;
+            height: 1px !important;
+            padding: 0 !important;
+            margin: -1px !important;
+            overflow: hidden !important;
+            clip: rect(0, 0, 0, 0) !important;
+            white-space: nowrap !important;
+            border: 0 !important;
+        }}
+        .sr-only-focusable:focus,
+        .sr-only-focusable:active {{
+            position: static !important;
+            width: auto !important;
+            height: auto !important;
+            margin: 0 !important;
+            overflow: visible !important;
+            clip: auto !important;
+            white-space: normal !important;
+        }}
+        a:focus-visible,
+        button:focus-visible,
+        input:focus-visible,
+        select:focus-visible,
+        textarea:focus-visible {{
+            outline: 3px solid var(--accent) !important;
+            outline-offset: 3px !important;
         }}
 
         #MainMenu, footer {{ visibility: hidden; }}
@@ -4247,11 +4302,24 @@ ADMIN_TABS: list[tuple[str, str, str]] = [
 ]
 
 
+def page_accessible_label(page: str) -> str:
+    labels = {
+        "main": "AI 추천 및 이동지원 연계",
+        "schedule": "내 운동 일정 추천",
+        "accessibility": "AI 기반 접근성 점검 보조",
+        "dashboard": "기관용 대시보드",
+    }
+    return labels.get(page, "현재")
+
+
 def tab_icon_svg(kind: str) -> str:
     if kind == "brain":
         brain_path = Path(__file__).resolve().parent / "assets" / "img" / "brain.svg"
         try:
-            return brain_path.read_text(encoding="utf-8")
+            svg = brain_path.read_text(encoding="utf-8").strip()
+            if "aria-hidden=" not in svg:
+                svg = svg.replace("<svg ", '<svg aria-hidden="true" focusable="false" ', 1)
+            return svg
         except OSError:
             pass
     icons = {
@@ -4313,19 +4381,24 @@ def handle_user_chrome_query() -> None:
         st.session_state.current_page = nav_tab
         if nav_tab != "main":
             st.session_state.pending_confirm = None
+        set_sr_message(f"{page_accessible_label(nav_tab)} 화면으로 이동했습니다.")
         changed = True
     action = st.query_params.get("action")
     if action == "high_contrast":
         st.session_state.high_contrast = not bool(st.session_state.get("high_contrast"))
+        state_label = "켜졌습니다" if st.session_state.high_contrast else "꺼졌습니다"
+        set_sr_message(f"고대비 모드가 {state_label}.")
         changed = True
     elif action == "voice":
         st.session_state.notice = "음성 안내는 프로토타입 데모 기능입니다."
+        set_sr_message("음성 안내 데모 버튼이 선택되었습니다.")
         changed = True
     elif action == "start_ai":
         incoming_origin = (st.query_params.get("origin") or "").strip()
         if incoming_origin:
             st.session_state.origin = incoming_origin
         start_analysis()
+        set_sr_message("AI 경로 분석을 시작했습니다.")
         changed = True
     elif action == "pending_ok":
         apply_pending_confirm()
@@ -4338,6 +4411,7 @@ def handle_user_chrome_query() -> None:
         st.session_state.main_step = "class"
         st.session_state.current_page = "main"
         st.session_state.notice = "버디 매칭을 건너뛰고 강습·지도자 추천으로 이동합니다."
+        set_sr_message("버디 매칭을 건너뛰고 강습 추천 화면으로 이동했습니다.")
         changed = True
     elif action == "care_confirm":
         open_confirm(
@@ -4348,12 +4422,14 @@ def handle_user_chrome_query() -> None:
             confirm_buddy=True,
             toast="버디 후보가 임시 확정되었습니다. 강습·지도자 추천으로 이동합니다.",
         )
+        set_sr_message("버디 매칭 확정 요청 모달이 열렸습니다. 확인하면 강습 추천 화면으로 이동합니다.")
         st.session_state.current_page = "main"
         changed = True
     elif action == "class_next":
         st.session_state.instructor_index = (int(st.session_state.get("instructor_index", 0)) + 1) % len(INSTRUCTORS)
         st.session_state.main_step = "class"
         st.session_state.current_page = "main"
+        set_sr_message("다른 지도자 추천 후보를 표시했습니다.")
         changed = True
     elif action == "class_confirm":
         open_confirm(
@@ -4364,6 +4440,7 @@ def handle_user_chrome_query() -> None:
             confirm_class=True,
             toast="강습 추천이 확정되었습니다. 생활체육 리포트로 이동합니다.",
         )
+        set_sr_message("강습 추천 확정 요청 모달이 열렸습니다. 확인하면 생활체육 리포트 화면으로 이동합니다.")
         st.session_state.current_page = "main"
         changed = True
     elif action == "schedule_find":
@@ -4386,12 +4463,36 @@ def handle_user_chrome_query() -> None:
         st.session_state.schedule_selected_time = ""
         st.session_state.schedule_top_pick = recommendations[0]["full_label"] if recommendations else ""
         st.session_state.current_page = "schedule"
+        set_sr_message(schedule_results_sr_summary(recommendations))
         changed = True
     elif action == "schedule_select":
         selected = st.query_params.get("schedule_time", "")
         if selected:
+            day_map = {
+                "화·목 중심": ["화", "목"],
+                "월·수 중심": ["월", "수"],
+                "주말 가능": ["토", "일"],
+            }
+            incoming_day = st.query_params.get("schedule_day_label")
+            incoming_time = st.query_params.get("schedule_time_label")
+            if incoming_day in day_map:
+                st.session_state.schedule_day_label = incoming_day
+            if incoming_time in {"오전 10시 전후", "오후 2시 전후", "오후 4시 전후"}:
+                st.session_state.schedule_time_label = incoming_time
+            day_label = st.session_state.get("schedule_day_label", "화·목 중심")
+            time_label = st.session_state.get("schedule_time_label", "오전 10시 전후")
+            recommendations = list(st.session_state.get("schedule_recommendations") or [])
+            if not recommendations:
+                recommendations = make_schedule_recommendations(day_map.get(day_label, ["화", "목"]), time_label)
+                st.session_state.schedule_recommendations = recommendations
+            st.session_state.schedule_generated = True
+            st.session_state.schedule_top_pick = (
+                st.session_state.get("schedule_top_pick")
+                or (recommendations[0]["full_label"] if recommendations else selected)
+            )
             st.session_state.schedule_selected_time = selected
             st.session_state.current_page = "schedule"
+            set_sr_message(f"{selected} 일정이 선택되었습니다.")
             changed = True
     elif action == "dashboard_dispatch":
         if st.session_state.get("role") == ADMIN_ROLE:
@@ -4405,12 +4506,22 @@ def handle_user_chrome_query() -> None:
             st.session_state.dashboard_log_lines = logs[-8:]
             st.session_state.current_page = "dashboard"
             st.session_state.notice = "대체 매칭 알림 mock 로그가 추가되었습니다."
+            set_sr_message("대체 매칭 알림 로그가 추가되었습니다. 기관용 대시보드 화면입니다.")
             changed = True
     elif action == "schedule_continue":
-        st.session_state.selected_schedule = st.session_state.get("schedule_selected_time") or st.session_state.get("schedule_top_pick")
+        selected_schedule = st.session_state.get("schedule_selected_time") or st.session_state.get("schedule_top_pick")
+        if not selected_schedule:
+            recommendations = list(st.session_state.get("schedule_recommendations") or [])
+            if recommendations:
+                selected_schedule = recommendations[0]["full_label"]
+        st.session_state.selected_schedule = selected_schedule
         st.session_state.current_page = "main"
         st.session_state.main_step = "route"
+        st.session_state.route_result = None
+        st.session_state.route_analysis_result = None
+        st.session_state.route_api_force_refresh = True
         st.session_state.notice = "선택한 시간 기준으로 예약 흐름을 이어갑니다."
+        set_sr_message("선택한 일정 기준으로 AI 추천 및 이동지원 연계 화면으로 이동했습니다.")
         changed = True
     elif action == "access_scan":
         facility_type, focus, issues = sync_access_controls_from_query()
@@ -4421,6 +4532,7 @@ def handle_user_chrome_query() -> None:
             st.session_state.get("access_photo_upload") is not None,
         )
         st.session_state.current_page = "accessibility"
+        set_sr_message(accessibility_sr_summary(st.session_state.get("access_analysis") or {}))
         changed = True
     elif action == "access_submit":
         facility_type, focus, issues = sync_access_controls_from_query()
@@ -4433,6 +4545,7 @@ def handle_user_chrome_query() -> None:
         entry = register_accessibility_submission(current)
         st.session_state.current_page = "accessibility"
         st.session_state.notice = f"제보 {entry['id']}가 접수 대기 상태로 등록되었습니다. 관리자 확인이 필요합니다."
+        set_sr_message(accessibility_sr_summary(current))
         changed = True
     elif action == "access_reward":
         facility_type, focus, issues = sync_access_controls_from_query()
@@ -4446,6 +4559,7 @@ def handle_user_chrome_query() -> None:
         add_points(200, "accessibility_points_awarded")
         st.session_state.current_page = "accessibility"
         st.session_state.notice = "접근성 제보 참여 인센티브 200BT가 적립되었습니다. 현금 환급·양도·재판매는 불가합니다."
+        set_sr_message("접근성 제보 참여 인센티브 200BT가 적립되었습니다.")
         changed = True
     elif action == "access_draft":
         facility_type, focus, issues = sync_access_controls_from_query()
@@ -4458,10 +4572,12 @@ def handle_user_chrome_query() -> None:
             )
         st.session_state.access_show_draft = True
         st.session_state.current_page = "accessibility"
+        set_sr_message("접근성 개선 검토용 공문 이메일 초안 모달이 열렸습니다.")
         changed = True
     elif action == "access_close_draft":
         st.session_state.access_show_draft = False
         st.session_state.current_page = "accessibility"
+        set_sr_message("접근성 개선 검토용 공문 이메일 초안 모달을 닫았습니다.")
         changed = True
     elif action == "access_prepare_draft":
         facility_type, focus, issues = sync_access_controls_from_query()
@@ -4475,6 +4591,7 @@ def handle_user_chrome_query() -> None:
         st.session_state.access_show_draft = True
         st.session_state.current_page = "accessibility"
         st.session_state.notice = "SendGrid payload 미리보기를 갱신했습니다."
+        set_sr_message("SendGrid payload 미리보기를 갱신했습니다.")
         changed = True
     elif action == "access_send_draft":
         facility_type, focus, issues = sync_access_controls_from_query()
@@ -4504,13 +4621,16 @@ def handle_user_chrome_query() -> None:
             st.session_state.notice = str(
                 send_result.get("message", "SendGrid 발송에 실패했습니다. 설정과 수신 주소를 확인해 주세요.")
             )
+        set_sr_message(st.session_state.notice)
         changed = True
     elif action == "access_submit_draft":
         st.session_state.access_show_draft = False
         st.session_state.current_page = "accessibility"
         st.session_state.notice = "공문 초안 검토 요청이 등록되었습니다. 발송은 발송 준비 버튼에서 시도할 수 있습니다."
+        set_sr_message(st.session_state.notice)
         changed = True
     elif action == "logout":
+        set_sr_message("로그아웃되었습니다.")
         st.session_state.logged_in = False
         st.session_state.authenticated = False
         st.session_state.auth_stage = "entry"
@@ -4593,12 +4713,16 @@ def render_user_topbar() -> None:
     }
     for page, label, icon_kind in USER_TABS:
         active = " active" if current_page == page else ""
+        selected = current_page == page
         q = dict(base_query)
         q["nav_tab"] = page
         q["page"] = page
         href = "?" + urlencode({k: v for k, v in q.items() if v != ""})
+        aria_current = ' aria-current="page"' if selected else ""
+        aria_label = f"현재 화면: {label}" if selected else f"{label} 화면으로 이동"
         tab_links.append(
-            f'<a class="app-tab{active}" href="{href}" target="_self">'
+            f'<a class="app-tab{active}" href="{esc(href)}" target="_self" role="tab" '
+            f'aria-selected="{str(selected).lower()}" aria-label="{esc(aria_label)}"{aria_current}>'
             f"{tab_icon_svg(icon_kind)}{esc(label)}</a>"
         )
 
@@ -4631,13 +4755,13 @@ def render_user_topbar() -> None:
                     </div>
 
                     <nav class="user-topbar-nav" aria-label="주요 메뉴">
-                        <div class="app-tab-track">
+                        <div class="app-tab-track" role="tablist" aria-label="이용자 주요 메뉴">
                             {"".join(tab_links)}
                         </div>
                     </nav>
 
                     <div class="user-topbar-tools">
-                        <a class="app-tool-btn" href="?action=high_contrast" target="_self" aria-label="고대비">
+                        <a class="app-tool-btn" href="?action=high_contrast" target="_self" aria-label="고대비 모드 전환">
                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
                                 <path d="M12 3v18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
                                 <path d="M12 3a9 9 0 0 1 0 18" fill="currentColor" opacity=".45"/>
@@ -4645,14 +4769,14 @@ def render_user_topbar() -> None:
                             </svg>
                             고대비
                         </a>
-                        <a class="app-tool-btn" href="?action=voice" target="_self" aria-label="음성">
+                        <a class="app-tool-btn" href="?action=voice" target="_self" aria-label="음성 안내 데모 실행">
                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
                                 <rect x="9" y="4" width="6" height="11" rx="3" stroke="currentColor" stroke-width="2"/>
                                 <path d="M6 11a6 6 0 0 0 12 0M12 17v3" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
                             </svg>
                             음성
                         </a>
-                        <a class="app-tool-btn icon-only" href="?action=logout" target="_self" aria-label="로그아웃">
+                        <a class="app-tool-btn icon-only" href="?action=logout" target="_self" aria-label="현재 계정에서 로그아웃">
                             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
                                 <path d="M12 3v9" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
                                 <path d="M8.5 6.5a7.5 7.5 0 1 0 9.7 0" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
@@ -4686,12 +4810,16 @@ def render_admin_topbar() -> None:
     }
     for page, label, icon_kind in ADMIN_TABS:
         active = " active" if current_page == page else ""
+        selected = current_page == page
         q = dict(base_query)
         q["nav_tab"] = page
         q["page"] = page
         href = "?" + urlencode({k: v for k, v in q.items() if v != ""})
+        aria_current = ' aria-current="page"' if selected else ""
+        aria_label = f"현재 화면: {label}" if selected else f"{label} 화면으로 이동"
         tab_links.append(
-            f'<a class="app-tab{active}" href="{href}" target="_self">'
+            f'<a class="app-tab{active}" href="{esc(href)}" target="_self" role="tab" '
+            f'aria-selected="{str(selected).lower()}" aria-label="{esc(aria_label)}"{aria_current}>'
             f"{tab_icon_svg(icon_kind)}{esc(label)}</a>"
         )
 
@@ -4714,13 +4842,13 @@ def render_admin_topbar() -> None:
                     </div>
 
                     <nav class="user-topbar-nav" aria-label="관리자 주요 메뉴">
-                        <div class="app-tab-track admin-tab-track">
+                        <div class="app-tab-track admin-tab-track" role="tablist" aria-label="관리자 주요 메뉴">
                             {"".join(tab_links)}
                         </div>
                     </nav>
 
                     <div class="user-topbar-tools">
-                        <a class="app-tool-btn" href="?action=high_contrast" target="_self" aria-label="고대비">
+                        <a class="app-tool-btn" href="?action=high_contrast" target="_self" aria-label="고대비 모드 전환">
                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
                                 <path d="M12 3v18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
                                 <path d="M12 3a9 9 0 0 1 0 18" fill="currentColor" opacity=".45"/>
@@ -4728,14 +4856,14 @@ def render_admin_topbar() -> None:
                             </svg>
                             고대비
                         </a>
-                        <a class="app-tool-btn" href="?action=voice" target="_self" aria-label="음성">
+                        <a class="app-tool-btn" href="?action=voice" target="_self" aria-label="음성 안내 데모 실행">
                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
                                 <rect x="9" y="4" width="6" height="11" rx="3" stroke="currentColor" stroke-width="2"/>
                                 <path d="M6 11a6 6 0 0 0 12 0M12 17v3" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
                             </svg>
                             음성
                         </a>
-                        <a class="app-tool-btn icon-only" href="?action=logout" target="_self" aria-label="로그아웃">
+                        <a class="app-tool-btn icon-only" href="?action=logout" target="_self" aria-label="현재 계정에서 로그아웃">
                             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
                                 <path d="M12 3v9" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
                                 <path d="M8.5 6.5a7.5 7.5 0 1 0 9.7 0" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
@@ -4844,11 +4972,13 @@ def render_nav() -> None:
 def render_notice() -> None:
     if st.session_state.get("center_warning"):
         st.warning(UNAVAILABLE_MESSAGE)
+        set_sr_message(UNAVAILABLE_MESSAGE)
         st.session_state.center_warning = False
 
     notice = st.session_state.get("notice")
     if notice:
         st.info(notice)
+        set_sr_message(notice)
         st.session_state.notice = ""
 
 
@@ -4867,23 +4997,32 @@ def render_flow_steps() -> None:
     html_steps = []
     for index, step in enumerate(order):
         status = "active" if step == current else "done" if index < current_index else ""
-        html_steps.append(f"<span class='flow-step {status}'>{esc(labels[step])}</span>")
-    st.markdown(f"<div class='flow-steps'>{''.join(html_steps)}</div>", unsafe_allow_html=True)
+        current_attr = ' aria-current="step"' if step == current else ""
+        sr_status = ""
+        if index < current_index:
+            sr_status = ' <span class="sr-only">완료됨</span>'
+        elif step == current:
+            sr_status = ' <span class="sr-only">현재 단계</span>'
+        html_steps.append(
+            f'<span class="flow-step {status}" role="listitem"{current_attr}>'
+            f"{esc(labels[step])}{sr_status}</span>"
+        )
+    st.markdown(
+        f'<div class="flow-steps" role="list" aria-label="운동 참여 진행 단계">{"".join(html_steps)}</div>',
+        unsafe_allow_html=True,
+    )
 
 
 def build_route_analysis() -> dict[str, Any]:
-    origin = st.session_state.get("origin") or "운양역"
+    origin = st.session_state.get("origin") or "김포 구래역 1번 출구"
     support = st.session_state.get("support_type") or SUPPORT_TYPES[0]
-    force_refresh = bool(st.session_state.pop("route_api_force_refresh", False)) or not st.session_state.get("route_result")
-    if force_refresh:
-        st.session_state.pop("route_public_api_cache", None)
     return engine_bridge.run_route_analysis(
         origin,
         DEFAULT_DESTINATION,
         support,
         buddy_matching=bool(st.session_state.get("buddy_matching")),
         generated_at=datetime.now().strftime("%Y-%m-%d %H:%M"),
-        force_refresh_apis=force_refresh,
+        force_refresh_apis=bool(st.session_state.pop("route_api_force_refresh", False)),
     )
 
 
@@ -4936,12 +5075,64 @@ def route_map_svg(result: dict[str, Any]) -> str:
     """
 
 
+def route_analysis_sr_summary(result: dict[str, Any], warnings: list[str] | None = None) -> str:
+    total_time = result.get("total_time", "확인 필요")
+    walk_risk = result.get("walk_risk", "확인 필요")
+    transfers = result.get("transfers", "확인 필요")
+    alternative = result.get("alternative", "이동지원 연계 검토")
+    warning_text = " ".join((warnings or result.get("route_warnings") or [])[:2])
+    if not warning_text:
+        warning_text = "현장 상황에 따라 승하차 위치와 센터 진입 동선을 확인해야 합니다."
+    return (
+        f"경로 분석 결과입니다. 예상 소요 시간은 {total_time}이며, 도보 위험도는 {walk_risk}입니다. "
+        f"환승은 {transfers}이고, 대체 이동수단은 {alternative}입니다. 주의사항: {warning_text}"
+    )
+
+
+def schedule_results_sr_summary(recommendations: list[dict[str, str]]) -> str:
+    if not recommendations:
+        return "일정 추천 결과가 아직 없습니다. 가능한 시간 찾기 버튼을 누르면 추천 시간이 표시됩니다."
+    top = recommendations[0]
+    capacity_note = top.get("badge", "추천")
+    return (
+        f"일정 추천 결과입니다. 가장 추천되는 시간은 {top.get('full_label', top.get('headline', '확인 필요'))}입니다. "
+        f"{top.get('reason', '이동지원 가능성과 버디 후보 여부를 함께 검토했습니다.')} "
+        f"프로그램 혼잡도 또는 정원 상태는 {capacity_note} 상태입니다."
+    )
+
+
+def report_sr_summary(total_time: str, buddy_state: str, instructor: str) -> str:
+    return (
+        "생활체육 리포트 결과입니다. 오늘 출석 흐름은 완료되었고, 운동 성취도는 82점, "
+        "지속참여 점수는 76점입니다. 리포트 저장 시 참여 인센티브 300BT가 추가됩니다. "
+        f"다음 운동은 도착 15분 여유를 두고 이동 계획 {total_time}, {buddy_state}, {instructor} 지도자 정보를 확인하는 방식으로 준비합니다."
+    )
+
+
+def accessibility_sr_summary(analysis: dict[str, Any]) -> str:
+    facility = analysis.get("facility_type", analysis.get("report_type", "접근성 점검 대상"))
+    issue = " / ".join(analysis.get("expected_issues", [])[:2]) or analysis.get("summary", "확인 필요")
+    grade = analysis.get("grade", analysis.get("risk", "확인 필요"))
+    admin = "관리자 확인이 필요합니다." if analysis.get("admin_review_recommended") else "관리자 확인은 참고 모니터링 수준입니다."
+    return (
+        f"접근성 점검 결과입니다. 점검 대상은 {facility}입니다. 감지된 위험 요소는 {issue}입니다. "
+        f"위험도는 {grade}이며, {admin}"
+    )
+
+
+def dashboard_sr_summary() -> str:
+    return (
+        "기관용 대시보드 요약입니다. 예약 대비 출석률은 94.2퍼센트, 이동지원 연계 성공률은 88.7퍼센트입니다. "
+        "운영 보드에는 노쇼 공백 1건과 접근성 검토 요청 1건이 표시되어 있습니다."
+    )
+
+
 def start_analysis() -> None:
     if st.session_state.get("destination_choice") == UNAVAILABLE_DESTINATION:
         block_unavailable_destination()
         return
     st.session_state.destination = DEFAULT_DESTINATION
-    st.session_state.pop("route_public_api_cache", None)
+    st.session_state.route_public_api_cache = None
     st.session_state.route_api_force_refresh = True
     st.session_state.route_result = None
     st.session_state.route_analysis_result = None
@@ -4959,6 +5150,7 @@ def open_confirm(title: str, subtitle: str, message: str, next_step: str, **extr
         "next_step": next_step,
         **extra,
     }
+    set_sr_message(f"{title} 모달이 열렸습니다. {subtitle}")
 
 
 def render_step_action_buttons(
@@ -5041,6 +5233,7 @@ def apply_pending_confirm() -> None:
     st.session_state.main_step = next_step
     st.session_state.current_page = "main"
     st.session_state.notice = pending.get("toast", "")
+    set_sr_message(st.session_state.notice or "확정되었습니다. 다음 단계로 이동합니다.")
     st.session_state.pending_confirm = None
     sync_resume_query_params()
 
@@ -5081,14 +5274,18 @@ def render_pending_confirm() -> None:
     ok_href = "?" + urlencode(main_resume_query(extra=ok_extra))
     st.markdown(
         f"""
-        <div class="section-card pending-confirm-card">
+        <div class="section-card pending-confirm-card"
+             role="dialog"
+             aria-modal="true"
+             aria-labelledby="pending-confirm-title"
+             aria-describedby="pending-confirm-desc">
             <p class="tiny-label">Confirm</p>
-            <h2 style="margin:0;color:var(--bandabi-ink);font-weight:900;">{esc(pending.get("title", "확정 요청"))}</h2>
-            <p class="section-copy">{esc(pending.get("subtitle", ""))}</p>
+            <h2 id="pending-confirm-title" style="margin:0;color:var(--bandabi-ink);font-weight:900;">{esc(pending.get("title", "확정 요청"))}</h2>
+            <p id="pending-confirm-desc" class="section-copy">{esc(pending.get("subtitle", ""))}</p>
             <div class="notice-box" style="margin-top:16px;">{esc(pending.get("message", ""))}</div>
             <div class="pending-confirm-actions">
-                <a class="pending-confirm-btn pending-confirm-btn-cancel" href="{esc(cancel_href)}" target="_self">취소</a>
-                <a class="pending-confirm-btn pending-confirm-btn-ok" href="{esc(ok_href)}" target="_self">확인</a>
+                <a class="pending-confirm-btn pending-confirm-btn-cancel" href="{esc(cancel_href)}" target="_self" aria-label="확정 요청 취소">취소</a>
+                <a class="pending-confirm-btn pending-confirm-btn-ok" href="{esc(ok_href)}" target="_self" aria-label="확정 요청 확인">확인</a>
             </div>
         </div>
         """,
@@ -5165,8 +5362,9 @@ def render_start() -> None:
             )
             zap_src = zap_icon_data_uri()
             st.markdown(
-                f'<a class="start-ai-link" href="{esc(start_href)}" target="_self">'
-                f'<img class="start-ai-icon" src="{esc(zap_src)}" alt="">AI 추천 시작</a>',
+                f'<a class="start-ai-link" href="{esc(start_href)}" target="_self" '
+                f'aria-label="AI 추천 및 경로 분석 시작">'
+                f'<img class="start-ai-icon" src="{esc(zap_src)}" alt="" aria-hidden="true">AI 추천 시작</a>',
                 unsafe_allow_html=True,
             )
             st.components.v1.html(
@@ -5243,6 +5441,7 @@ def render_route() -> None:
         st.session_state.route_analysis_result = cached
         st.session_state.route_inputs_fingerprint = fingerprint
         st.session_state.route_api_force_refresh = False
+        set_sr_message(route_analysis_sr_summary(cached))
     result = cached
     route_warnings = result.get("route_warnings") or []
     warning_items = route_warnings[:4] or ["현장 상황에 따라 승하차 위치와 센터 진입 동선은 한 번 더 확인해 주세요."]
@@ -5263,6 +5462,7 @@ def render_route() -> None:
     st.markdown(
         html_block(f"""
         <div class="section-card">
+            <p class="sr-only">{esc(route_analysis_sr_summary(result, warning_items))}</p>
             <p class="tiny-label">추천 경로</p>
             <h2 style="margin:0;color:var(--bandabi-ink);font-size:24px;font-weight:900;line-height:1.28;">{esc(result["recommended_route"])}</h2>
             <p class="section-copy">{esc(result["opinion"])}</p>
@@ -5331,6 +5531,7 @@ def render_route() -> None:
 
     def _route_retry() -> None:
         st.session_state.main_step = "start"
+        set_sr_message("경로 분석을 다시 시작하기 위해 입력 화면으로 이동합니다.")
         st.rerun()
 
     def _route_confirm() -> None:
@@ -5413,8 +5614,8 @@ def render_buddy() -> None:
     st.markdown(
         f"""
         <div class="step-action-links">
-            <a class="step-action-link secondary" href="{esc(skip_href)}" target="_self">건너뛰기</a>
-            <a class="step-action-link primary" href="{esc(confirm_href)}" target="_self">확정하기</a>
+            <a class="step-action-link secondary" href="{esc(skip_href)}" target="_self" aria-label="버디 매칭 건너뛰기">건너뛰기</a>
+            <a class="step-action-link primary" href="{esc(confirm_href)}" target="_self" aria-label="버디 매칭 확정하기">확정하기</a>
         </div>
         """,
         unsafe_allow_html=True,
@@ -5456,8 +5657,8 @@ def render_class() -> None:
     st.markdown(
         f"""
         <div class="step-action-links">
-            <a class="step-action-link secondary" href="{esc(next_href)}" target="_self">다른 지도자</a>
-            <a class="step-action-link primary" href="{esc(confirm_href)}" target="_self">확정하기</a>
+            <a class="step-action-link secondary" href="{esc(next_href)}" target="_self" aria-label="다른 지도자 추천 보기">다른 지도자</a>
+            <a class="step-action-link primary" href="{esc(confirm_href)}" target="_self" aria-label="강습 추천 확정하기">확정하기</a>
         </div>
         """,
         unsafe_allow_html=True,
@@ -5503,6 +5704,7 @@ def render_report() -> None:
     st.markdown(
         html_block(f"""
         <div class="report-native-grid">
+            <p class="sr-only">{esc(report_sr_summary(str(total_time), buddy_state, instructor))}</p>
             <article class="report-native-card">
                 <p class="report-native-label">성취도 점수</p>
                 <p class="report-native-value">82점</p>
@@ -5555,6 +5757,7 @@ def render_report() -> None:
             st.session_state.report_saved = True
             st.session_state.guardian_summary = guardian_summary_text()
             st.session_state.main_step = "guardian"
+            set_sr_message("리포트가 저장되었습니다. 참여 인센티브 300BT가 적립되었고 보호자 공유 요약 화면으로 이동합니다.")
             sync_resume_query_params()
             st.rerun()
 
@@ -5699,10 +5902,18 @@ def schedule_slot_card_html(item: dict[str, str]) -> str:
         classes.append("selected")
     card_class = " ".join(classes)
     select_href = "?" + urlencode(
-        schedule_resume_query(extra={"action": "schedule_select", "schedule_time": item["full_label"]})
+        schedule_resume_query(
+            extra={
+                "action": "schedule_select",
+                "schedule_time": item["full_label"],
+                "schedule_day_label": st.session_state.get("schedule_day_label", "화·목 중심"),
+                "schedule_time_label": st.session_state.get("schedule_time_label", "오전 10시 전후"),
+            }
+        )
     )
+    aria_label = f"{item.get('rank_label', '일정 후보')} {item.get('full_label', item.get('headline', ''))} 선택"
     return f"""
-    <a class="{card_class}" href="{esc(select_href)}" target="_self">
+    <a class="{card_class}" href="{esc(select_href)}" target="_self" aria-label="{esc(aria_label)}">
         <div class="schedule-slot-head">
             <div>
                 <p class="schedule-slot-rank {esc(item.get('rank_tone', 'purple'))}">{esc(item.get('rank_label', ''))}</p>
@@ -5730,6 +5941,7 @@ def build_schedule_results_html() -> str:
         """
         return (
             "<div class='schedule-empty'>"
+            f"<p class='sr-only'>{esc(schedule_results_sr_summary([]))}</p>"
             f"<div>{calendar_plus_icon}"
             "<div class='big'>가능한 시간 찾기를 누르면 추천 시간이 표시됩니다</div>"
             "<div class='small'>강습·이동지원·버디 후보를 함께 계산합니다.</div></div>"
@@ -5748,7 +5960,7 @@ def build_schedule_results_html() -> str:
                 <p class="schedule-confirm-title">{esc(selected)} 일정이 선택됐어요</p>
                 <p class="schedule-confirm-copy">이 시간으로 예약 흐름을 이어가면 경로·버디·강습 추천과 연결됩니다.</p>
             </div>
-            <a class="schedule-confirm-link" href="{esc(continue_href)}" target="_self">이 시간으로 예약 이어가기</a>
+            <a class="schedule-confirm-link" href="{esc(continue_href)}" target="_self" aria-label="선택한 시간으로 예약 흐름 이어가기">이 시간으로 예약 이어가기</a>
         </div>
         """
         toast_html = f"<div class='schedule-toast'>{esc(selected)} 일정이 선택되었습니다.</div>"
@@ -5759,7 +5971,8 @@ def build_schedule_results_html() -> str:
         "이동지원 연계 가능성이 높고, 같은 센터를 이용하는 버디 후보가 있습니다."
         "</div>"
     )
-    return f"<div class='schedule-result-stack'>{cards}{confirm_html}</div>{optimize_html}{toast_html}"
+    summary = f"<p class='sr-only'>{esc(schedule_results_sr_summary(recommendations))}</p>"
+    return f"{summary}<div class='schedule-result-stack'>{cards}{confirm_html}</div>{optimize_html}{toast_html}"
 
 
 def render_schedule_page() -> None:
@@ -5818,7 +6031,7 @@ def render_schedule_page() -> None:
                 </div>
                 <form id="schedule-preference-form" class="schedule-find-form" method="get">
                     {schedule_hidden_inputs}
-                    <button class="schedule-find-link" type="submit">
+                    <button class="schedule-find-link" type="submit" aria-label="가능한 운동 시간 찾기">
                     <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
                         <path d="M10.9 3.6a7.25 7.25 0 0 0-2.7 13.98c.42.16.87-.06 1.02-.49.15-.42-.06-.88-.48-1.04A5.63 5.63 0 1 1 16.05 8.8c.16.42.62.64 1.04.49.43-.15.65-.61.5-1.04A7.25 7.25 0 0 0 10.9 3.6Z" fill="currentColor"/>
                         <path d="M10.9 7.2c-1.65 0-3 1.34-3 3 0 2.25 3 5.65 3 5.65s3-3.4 3-5.65c0-1.66-1.35-3-3-3Zm0 4.05a1.05 1.05 0 1 1 0-2.1 1.05 1.05 0 0 1 0 2.1ZM15.4 15.4l4.95 4.95" stroke="currentColor" stroke-width="3" stroke-linecap="round"/>
@@ -6281,7 +6494,7 @@ def render_accessibility_page() -> None:
                         <h2 class="access-native-heading">접근성 점검 보조</h2>
                         <p class="access-sub">사진 제보를 위험도 카드로 바꿔 보여줍니다.</p>
                     </div>
-                    <a class="access-scan-link" href="{esc(access_href('access_scan'))}" target="_self">
+                    <a class="access-scan-link" href="{esc(access_href('access_scan'))}" target="_self" aria-label="접근성 스캔 실행">
                         <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
                             <path d="M5 8.5h3l1.5-2h5L16 8.5h3a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2Z" fill="currentColor"/>
                             <circle cx="12" cy="14" r="3.2" fill="#fff"/>
@@ -6363,14 +6576,14 @@ def render_accessibility_page() -> None:
                             </select>
                         </div>
                         <div class="access-detail-actions">
-                            <button class="access-detail-button primary" type="submit" name="action" value="access_scan">
+                            <button class="access-detail-button primary" type="submit" name="action" value="access_scan" aria-label="선택값으로 접근성 스캔 실행">
                                 <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
                                     <path d="M5 8.5h3l1.5-2h5L16 8.5h3a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2Z" fill="currentColor"/>
                                     <circle cx="12" cy="14" r="3.2" fill="#fff"/>
                                 </svg>
                                 선택값으로 AI 보조 점검 실행
                             </button>
-                            <button class="access-detail-button secondary" type="submit" name="action" value="access_submit">
+                            <button class="access-detail-button secondary" type="submit" name="action" value="access_submit" aria-label="접근성 점검 리포트 생성 및 제보 등록">
                                 점검 리포트 생성 · 제보 등록
                             </button>
                         </div>
@@ -6382,7 +6595,7 @@ def render_accessibility_page() -> None:
                 </div>
                 <div class="access-note-native">{result_note}</div>
                 <div class="access-action-native-grid">
-                    <a class="access-action-link reward" href="{esc(access_href('access_reward'))}" target="_self">
+                    <a class="access-action-link reward" href="{esc(access_href('access_reward'))}" target="_self" aria-label="제보 참여 인센티브 확인">
                         <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
                             <ellipse cx="12" cy="6.5" rx="7" ry="2.8" fill="currentColor"/>
                             <path d="M5 7v8c0 1.7 3.1 3 7 3s7-1.3 7-3V7" stroke="#fff" stroke-width="2"/>
@@ -6390,7 +6603,7 @@ def render_accessibility_page() -> None:
                         </svg>
                         제보 참여 인센티브
                     </a>
-                    <a class="access-action-link draft" href="{esc(access_href('access_draft'))}" target="_self">
+                    <a class="access-action-link draft" href="{esc(access_href('access_draft'))}" target="_self" aria-label="접근성 개선 공문 초안 생성">
                         <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
                             <path d="M6 3.5h8.2L19 8.3V20.5H6V3.5Z" fill="currentColor"/>
                             <path d="M14 3.5V8.5H19" stroke="#fff" stroke-width="2" stroke-linejoin="round"/>
@@ -6480,6 +6693,7 @@ def render_accessibility_page() -> None:
         st.markdown(
             html_block(f"""
             <section class="access-report-native" aria-label="AI 보조 점검 상세 리포트">
+                <p class="sr-only">{esc(accessibility_sr_summary(analysis))}</p>
                 <h3>AI 보조 점검 상세 리포트</h3>
                 <div class="access-result-card">
                     <div class="access-grade-row">
@@ -6543,13 +6757,17 @@ def render_accessibility_page() -> None:
         body_textarea = esc(body).replace("\n", "&#10;")
         st.markdown(
             html_block(f"""
-            <div class="access-draft-overlay" role="dialog" aria-modal="true" aria-label="접근성 개선 검토용 공문 이메일 초안">
+            <div class="access-draft-overlay"
+                 role="dialog"
+                 aria-modal="true"
+                 aria-labelledby="access-draft-title"
+                 aria-describedby="access-draft-desc">
                 <section class="access-draft-modal">
                     <div class="access-draft-head">
                         <div>
                             <p class="access-kicker">Official Notice Draft</p>
-                            <h2 class="access-draft-title">접근성 개선 검토용 공문·이메일 초안</h2>
-                            <p class="access-draft-copy">미리보기 내용을 수정한 뒤, 추후 SendGrid API와 연결할 수 있는 형태로 저장합니다.</p>
+                            <h2 id="access-draft-title" class="access-draft-title">접근성 개선 검토용 공문·이메일 초안</h2>
+                            <p id="access-draft-desc" class="access-draft-copy">미리보기 내용을 수정한 뒤, 추후 SendGrid API와 연결할 수 있는 형태로 저장합니다.</p>
                         </div>
                         <a class="access-draft-close" href="{esc(access_href('access_close_draft'))}" target="_self" aria-label="공문 초안 닫기">
                             <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -6584,7 +6802,7 @@ def render_accessibility_page() -> None:
                                 </svg>
                                 공문/이메일 본문 미리보기
                             </p>
-                            <a class="access-draft-mini-link" href="{esc(access_href('access_prepare_draft'))}" target="_self">Payload 갱신</a>
+                            <a class="access-draft-mini-link" href="{esc(access_href('access_prepare_draft'))}" target="_self" aria-label="SendGrid payload 미리보기 갱신">Payload 갱신</a>
                         </div>
                         <textarea class="access-draft-textarea" spellcheck="false">{body_textarea}</textarea>
                     </div>
@@ -6599,14 +6817,14 @@ def render_accessibility_page() -> None:
                     </div>
                     <p class="access-draft-warning">※ 관리자 검토용 초안입니다. ENABLE_SENDGRID_SEND=true 이고 Secrets가 설정되면 발송 준비 버튼으로 SendGrid 전송을 시도합니다. API Key는 표시하지 않습니다.</p>
                     <div class="access-draft-actions">
-                        <a class="access-draft-action neutral" href="{esc(access_href('access_prepare_draft'))}" target="_self">
+                        <a class="access-draft-action neutral" href="{esc(access_href('access_prepare_draft'))}" target="_self" aria-label="공문 초안 미리보기 갱신">
                             <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
                                 <path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z" stroke="currentColor" stroke-width="2.2"/>
                                 <circle cx="12" cy="12" r="3" fill="currentColor"/>
                             </svg>
                             미리보기 갱신
                         </a>
-                        <a class="access-draft-action ready" href="{esc(access_href('access_send_draft'))}" target="_self">
+                        <a class="access-draft-action ready" href="{esc(access_href('access_send_draft'))}" target="_self" aria-label="공문 초안 발송 준비">
                             <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
                                 <path d="M4 6h16v12H4V6Z" stroke="currentColor" stroke-width="2.2" stroke-linejoin="round"/>
                                 <path d="m4 7 8 6 8-6" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
@@ -6614,7 +6832,7 @@ def render_accessibility_page() -> None:
                             </svg>
                             발송 준비
                         </a>
-                        <a class="access-draft-action submit" href="{esc(access_href('access_submit_draft'))}" target="_self">
+                        <a class="access-draft-action submit" href="{esc(access_href('access_submit_draft'))}" target="_self" aria-label="공문 초안 검토 요청 등록">
                             <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
                                 <path d="M21 3 10 14" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/>
                                 <path d="m21 3-7 18-4-7-7-4 18-7Z" stroke="currentColor" stroke-width="2.4" stroke-linejoin="round"/>
@@ -6681,46 +6899,14 @@ def render_dashboard_page() -> None:
     )
     log_lines = list(st.session_state.get("dashboard_log_lines") or [])
     log_html = "".join(f"<p>{esc(line)}</p>" for line in log_lines)
-
-    if st.button("API 상태 새로고침", key="dashboard_api_refresh", use_container_width=True):
-        st.session_state.pop("dashboard_api_cache", None)
-        st.session_state.pop("route_public_api_cache", None)
-        api_items = engine_bridge.dashboard_api_status_items(refresh=True)
-    else:
-        api_items = engine_bridge.dashboard_api_status_items(
-            cache=st.session_state.get("dashboard_api_cache")
-        )
-    st.session_state.dashboard_api_cache = api_items
-
-    secret_status = list_config_status()
-    allowed_secret_status = {"configured", "missing_key", "enabled", "disabled"}
-    secret_html = "".join(
-        f'<div class="dashboard-api-item"><b>{esc(name)}</b><br>{esc(status if status in allowed_secret_status else "missing_key")}</div>'
-        for name, status in secret_status.items()
+    api_items = engine_bridge.dashboard_api_status_items(
+        cache=st.session_state.get("dashboard_api_cache")
     )
-
-    def _api_card(item: dict[str, Any]) -> str:
-        status = str(item.get("status", "unknown"))
-        source = str(item.get("source", ""))
-        reason = str(item.get("reason_code", item.get("reason", "")))
-        action = str(item.get("action_needed", ""))
-        real_count = str(item.get("real_count", ""))
-        fallback_count = str(item.get("fallback_count", ""))
-        details = [
-            f"status={status}",
-            f"source={source}" if source else "source=",
-            f"reason={reason}" if reason else "reason=",
-            f"action={action}" if action else "action=",
-            f"real={real_count}" if real_count != "" else "real=",
-            f"fallback={fallback_count}" if fallback_count != "" else "fallback=",
-        ]
-        return (
-            f'<div class="dashboard-api-item{" wide" if item.get("name") == "SendGrid" else ""}">'
-            f'<b>{esc(item.get("name", ""))}</b><br>'
-            f'{esc(" · ".join(details))}</div>'
-        )
-
-    api_html = "".join(_api_card(item) for item in api_items if isinstance(item, dict))
+    st.session_state.dashboard_api_cache = api_items
+    api_html = "".join(
+        f'<div class="dashboard-api-item{" wide" if label == "SendGrid" else ""}"><b>{esc(label)}</b><br>{esc(status)}</div>'
+        for label, status in api_items
+    )
     chart_font_face = (
         f"""
           @font-face {{
@@ -6738,6 +6924,7 @@ def render_dashboard_page() -> None:
     st.markdown(
         html_block(f"""
         <section class="dashboard-native-shell dashboard-kpi-shell">
+            <p class="sr-only">{esc(dashboard_sr_summary())}</p>
             <div class="dashboard-kpi-grid">
                 <div class="dashboard-kpi-card">
                     <svg class="dashboard-kpi-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -6880,7 +7067,7 @@ def render_dashboard_page() -> None:
                         <p class="dashboard-board-kicker">B2G Operating Board</p>
                         <p class="dashboard-board-title" role="heading" aria-level="2">기관 운영 액션 보드</p>
                     </div>
-                    <a class="dashboard-dispatch-link" href="{esc(dispatch_href)}" target="_self">대체 매칭 알림</a>
+                    <a class="dashboard-dispatch-link" href="{esc(dispatch_href)}" target="_self" aria-label="대체 매칭 알림 발송 로그 추가">대체 매칭 알림</a>
                 </div>
                 <div class="dashboard-table-wrap">
                     <table class="dashboard-table">
@@ -6909,12 +7096,8 @@ def render_dashboard_page() -> None:
                     </table>
                 </div>
                 <div class="dashboard-api-section">
-                    <p class="dashboard-panel-title">API smoke status</p>
+                    <p class="dashboard-panel-title">공공데이터 연동 상태</p>
                     <div class="dashboard-api-grid">{api_html}</div>
-                </div>
-                <div class="dashboard-api-section">
-                    <p class="dashboard-panel-title">Streamlit Cloud Secrets status</p>
-                    <div class="dashboard-api-grid">{secret_html}</div>
                 </div>
                 <div class="dashboard-log-feed">{log_html}</div>
             </div>
@@ -6930,6 +7113,7 @@ def render_app() -> None:
 
     if not st.session_state.get("logged_in"):
         render_auth()
+        render_sr_announcement()
         return
 
     if st.session_state.get("role") == USER_ROLE:
@@ -6942,6 +7126,7 @@ def render_app() -> None:
         render_admin_topbar()
 
     render_notice()
+    render_sr_announcement()
 
     page = st.session_state.get("current_page", "main")
     if page == "main":
