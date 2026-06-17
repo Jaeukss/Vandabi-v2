@@ -117,19 +117,20 @@ def set_sr_message(message: str) -> None:
     if not message:
         return
     st.session_state["sr_announcement"] = str(message)
+    st.session_state["sr_announcement_seq"] = int(st.session_state.get("sr_announcement_seq", 0)) + 1
 
 
 def render_sr_announcement() -> None:
     message = st.session_state.get("sr_announcement", "")
-    if not message:
-        return
+    seq = int(st.session_state.get("sr_announcement_seq", 0))
     st.markdown(
         f"""
         <div id="sr-announcer"
              class="sr-only"
              role="status"
              aria-live="polite"
-             aria-atomic="true">
+             aria-atomic="true"
+             data-announcement-seq="{seq}">
           {esc(message)}
         </div>
         """,
@@ -185,6 +186,7 @@ def init_state() -> None:
         "center_warning": False,
         "notice": "",
         "sr_announcement": "",
+        "sr_announcement_seq": 0,
         "high_contrast": False,
         "vision_last_report_type": "점자블록",
         "access_facility_type": "점자블록",
@@ -4312,6 +4314,18 @@ def page_accessible_label(page: str) -> str:
     return labels.get(page, "현재")
 
 
+def step_accessible_label(step: str | None = None) -> str:
+    labels = {
+        "start": "출발지와 지원 필요 유형을 입력하는 시작 단계",
+        "route": "경로 분석 결과 확인 단계",
+        "care": "버디 매칭 후보 확인 단계",
+        "class": "강습 및 지도자 추천 확인 단계",
+        "report": "생활체육 리포트 확인 단계",
+        "guardian": "보호자 공유 요약 확인 단계",
+    }
+    return labels.get(step or st.session_state.get("main_step", "start"), "현재 단계 확인 필요")
+
+
 def current_resume_query(*, extra: dict[str, str] | None = None) -> dict[str, str]:
     query = {
         "resume": "1",
@@ -4324,6 +4338,37 @@ def current_resume_query(*, extra: dict[str, str] | None = None) -> dict[str, st
     if extra:
         query.update(extra)
     return {k: v for k, v in query.items() if v != ""}
+
+
+def render_skip_link() -> None:
+    st.markdown(
+        '<a class="sr-only sr-only-focusable" href="#bandabi-main-content">본문으로 건너뛰기</a>',
+        unsafe_allow_html=True,
+    )
+
+
+def render_sr_page_context() -> None:
+    if not st.session_state.get("logged_in"):
+        page_text = "로그인 또는 회원가입 화면"
+        role_text = "로그인 전"
+        step_text = "인증 단계"
+    else:
+        page = st.session_state.get("current_page", "main")
+        page_text = page_accessible_label(page)
+        role_text = role_label(st.session_state.get("role"))
+        step_text = step_accessible_label() if page == "main" else "해당 화면의 첫 영역"
+    st.markdown(
+        html_block(f"""
+        <section class="sr-only" aria-label="현재 앱 위치">
+            <h2>현재 앱 위치</h2>
+            <p>현재 화면: {esc(page_text)}</p>
+            <p>현재 역할: {esc(role_text)}</p>
+            <p>현재 단계: {esc(step_text)}</p>
+            <p>상단 메뉴는 화면 이동 링크이며, 본문 영역에는 현재 화면의 주요 입력과 결과가 이어집니다.</p>
+        </section>
+        """),
+        unsafe_allow_html=True,
+    )
 
 
 def tab_icon_svg(kind: str) -> str:
@@ -7130,10 +7175,14 @@ def render_dashboard_page() -> None:
 def render_app() -> None:
     init_state()
     inject_css()
+    render_skip_link()
 
     if not st.session_state.get("logged_in"):
+        st.markdown('<main id="bandabi-main-content" tabindex="-1">', unsafe_allow_html=True)
+        render_sr_page_context()
         render_auth()
         render_sr_announcement()
+        st.markdown("</main>", unsafe_allow_html=True)
         return
 
     if st.session_state.get("role") == USER_ROLE:
@@ -7147,6 +7196,8 @@ def render_app() -> None:
 
     render_notice()
     render_sr_announcement()
+    st.markdown('<main id="bandabi-main-content" tabindex="-1">', unsafe_allow_html=True)
+    render_sr_page_context()
 
     page = st.session_state.get("current_page", "main")
     if page == "main":
@@ -7167,6 +7218,7 @@ def render_app() -> None:
             render_dashboard_page()
         else:
             render_main_page()
+    st.markdown("</main>", unsafe_allow_html=True)
 
 
 render_app()
