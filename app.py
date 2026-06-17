@@ -4312,6 +4312,20 @@ def page_accessible_label(page: str) -> str:
     return labels.get(page, "현재")
 
 
+def current_resume_query(*, extra: dict[str, str] | None = None) -> dict[str, str]:
+    query = {
+        "resume": "1",
+        "page": st.session_state.get("current_page", "main"),
+        "step": st.session_state.get("main_step", "start"),
+        "role": st.session_state.get("role", USER_ROLE),
+        "user": st.session_state.get("user_name", ""),
+        "email": st.session_state.get("user_email", ""),
+    }
+    if extra:
+        query.update(extra)
+    return {k: v for k, v in query.items() if v != ""}
+
+
 def tab_icon_svg(kind: str) -> str:
     if kind == "brain":
         brain_path = Path(__file__).resolve().parent / "assets" / "img" / "brain.svg"
@@ -4702,6 +4716,9 @@ def render_user_topbar() -> None:
         if icon_src
         else '<span class="brand-mark" style="margin:0;width:48px;height:48px;border-radius:18px;">B</span>'
     )
+    high_contrast_href = "?" + urlencode(current_resume_query(extra={"action": "high_contrast"}))
+    voice_href = "?" + urlencode(current_resume_query(extra={"action": "voice"}))
+    logout_href = "?" + urlencode(current_resume_query(extra={"action": "logout"}))
 
     tab_links = []
     base_query = {
@@ -4761,7 +4778,7 @@ def render_user_topbar() -> None:
                     </nav>
 
                     <div class="user-topbar-tools">
-                        <a class="app-tool-btn" href="?action=high_contrast" target="_self" aria-label="고대비 모드 전환">
+                        <a class="app-tool-btn" href="{esc(high_contrast_href)}" target="_self" aria-label="고대비 모드 전환">
                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
                                 <path d="M12 3v18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
                                 <path d="M12 3a9 9 0 0 1 0 18" fill="currentColor" opacity=".45"/>
@@ -4769,14 +4786,14 @@ def render_user_topbar() -> None:
                             </svg>
                             고대비
                         </a>
-                        <a class="app-tool-btn" href="?action=voice" target="_self" aria-label="음성 안내 데모 실행">
+                        <a class="app-tool-btn" href="{esc(voice_href)}" target="_self" aria-label="음성 안내 데모 실행">
                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
                                 <rect x="9" y="4" width="6" height="11" rx="3" stroke="currentColor" stroke-width="2"/>
                                 <path d="M6 11a6 6 0 0 0 12 0M12 17v3" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
                             </svg>
                             음성
                         </a>
-                        <a class="app-tool-btn icon-only" href="?action=logout" target="_self" aria-label="현재 계정에서 로그아웃">
+                        <a class="app-tool-btn icon-only" href="{esc(logout_href)}" target="_self" aria-label="현재 계정에서 로그아웃">
                             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
                                 <path d="M12 3v9" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
                                 <path d="M8.5 6.5a7.5 7.5 0 1 0 9.7 0" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
@@ -4799,6 +4816,9 @@ def render_admin_topbar() -> None:
         if icon_src
         else '<span class="brand-mark" style="margin:0;width:48px;height:48px;border-radius:18px;">B</span>'
     )
+    high_contrast_href = "?" + urlencode(current_resume_query(extra={"action": "high_contrast"}))
+    voice_href = "?" + urlencode(current_resume_query(extra={"action": "voice"}))
+    logout_href = "?" + urlencode(current_resume_query(extra={"action": "logout"}))
 
     tab_links = []
     base_query = {
@@ -4848,7 +4868,7 @@ def render_admin_topbar() -> None:
                     </nav>
 
                     <div class="user-topbar-tools">
-                        <a class="app-tool-btn" href="?action=high_contrast" target="_self" aria-label="고대비 모드 전환">
+                        <a class="app-tool-btn" href="{esc(high_contrast_href)}" target="_self" aria-label="고대비 모드 전환">
                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
                                 <path d="M12 3v18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
                                 <path d="M12 3a9 9 0 0 1 0 18" fill="currentColor" opacity=".45"/>
@@ -4856,14 +4876,14 @@ def render_admin_topbar() -> None:
                             </svg>
                             고대비
                         </a>
-                        <a class="app-tool-btn" href="?action=voice" target="_self" aria-label="음성 안내 데모 실행">
+                        <a class="app-tool-btn" href="{esc(voice_href)}" target="_self" aria-label="음성 안내 데모 실행">
                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
                                 <rect x="9" y="4" width="6" height="11" rx="3" stroke="currentColor" stroke-width="2"/>
                                 <path d="M6 11a6 6 0 0 0 12 0M12 17v3" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
                             </svg>
                             음성
                         </a>
-                        <a class="app-tool-btn icon-only" href="?action=logout" target="_self" aria-label="현재 계정에서 로그아웃">
+                        <a class="app-tool-btn icon-only" href="{esc(logout_href)}" target="_self" aria-label="현재 계정에서 로그아웃">
                             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
                                 <path d="M12 3v9" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
                                 <path d="M8.5 6.5a7.5 7.5 0 1 0 9.7 0" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
